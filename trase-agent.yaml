@@ -1,0 +1,3 @@
+name: github-issues-slack-agent
+framework: langgraph
+entrypoint: agent.main:run
