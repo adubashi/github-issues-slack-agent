@@ -167,14 +167,17 @@ Write a Slack message in Slack mrkdwn (NOT a code block, no ``` fences), under 1
 about GitHub issue activity in {repo} in the last {hours} hours.
 
 First line, exactly: *{repo} · last {hours}h:* {new} new · {updated} updated · {closed} closed
-Then one line per issue, at most 10, as "• <url|#number title>" followed by the activity
-in italics (_new_, _updated_ or _closed_) and labels in brackets if any. If there are more
-than 10, end with "…and N more". Use the counts above as given; do not recount.
+Then one line per issue in the data, in the order given, as "• <url|#number title>" followed
+by the activity in italics (_new_, _updated_ or _closed_) and labels in brackets if any.
+{more_line}Use the numbers above as given; do not recount.
 If there was no activity, say so in one line. If there is an error instead of issues, say
 plainly that the issues couldn't be fetched and why.
 {question}
 Data:
 {data}"""
+
+
+MAX_LISTED = 10  # issues listed in the Slack message; the rest are counted in code
 
 
 def _strip_fences(text: str) -> str:
@@ -184,13 +187,17 @@ def _strip_fences(text: str) -> str:
 
 def summarize(state: State) -> State:
     counts = state.get("counts") or {"new": 0, "updated": 0, "closed": 0}
-    data = {"issues": state.get("issues", []), "error": state.get("error")}
+    issues = state.get("issues", [])
+    shown, more = issues[:MAX_LISTED], max(0, len(issues) - MAX_LISTED)
+    more_line = f'End with exactly: "…and {more} more"\n' if more else ""
+    data = {"issues": shown, "error": state.get("error")}
     question = f"The user asked: {state['question']}" if state.get("question") else ""
     prompt = SUMMARY_PROMPT.format(
         repo=state["repo"],
         hours=state.get("hours") or 24,
         question=question,
         data=json.dumps(data),
+        more_line=more_line,
         **counts,
     )
     return {"summary": _strip_fences(model.invoke(prompt).content)}
