@@ -107,7 +107,13 @@ async def fetch_issues(state: State) -> State:
     except Exception as exc:  # noqa: BLE001 - reported in the summary, not raised
         log.warning("list_issues on %s failed: %s", state["repo"], exc)
         return {"mcp_tools": sorted(tools), "error": f"list_issues failed: {exc}"[:500]}
-    issues = _issue_rows(raw, state["repo"])
+    try:
+        issues = _issue_rows(raw, state["repo"])
+    except ValueError:
+        # GitHub's MCP server reports failures (e.g. a repo the token can't see) as plain text.
+        text = raw if isinstance(raw, str) else json.dumps(raw)
+        log.warning("list_issues on %s returned an error: %s", state["repo"], text[:300])
+        return {"mcp_tools": sorted(tools), "error": f"GitHub MCP said: {text[:400]}"}
     log.info("list_issues returned %d open issue(s) for %s", len(issues), state["repo"])
     return {"mcp_tools": sorted(tools), "issues": issues}
 
