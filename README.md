@@ -12,7 +12,8 @@ fetch_issues (GitHub MCP: list_issues) -> summarize (OpenAI) -> notify (Slack ch
 
 | Connection | Reached at | Used for |
 | --- | --- | --- |
-| `github-mcp` | `TRASE_GITHUB_MCP_URL` (platform-injected) | `list_issues` over MCP |
+| `github-mcp-trase` (default; you create it) | `${TRASE_EGRESS_GATEWAY_URL}/github-mcp-trase/mcp/` | `list_issues` over MCP, with a token that can read TraseSystems repos |
+| `github-mcp` (platform's own; pass `"github_connection": "github-mcp"`) | `TRASE_GITHUB_MCP_URL` (platform-injected) | same, with the platform's token |
 | `openai` | `TRASE_OPENAI_BASE_URL` | the summary |
 | `slack` | `${TRASE_EGRESS_GATEWAY_URL}/slack/api/` | `chat.postMessage` |
 
@@ -31,8 +32,14 @@ instead of failing.
  "user_message": "anything blocking the next release?"}
 ```
 
-Defaults: `TraseSystems/trase-os-sdk`, `#ansh-test`. The Slack bot must be a member of the
-channel.
+Defaults: `TraseSystems/trase-os-sdk`, `#ansh-test`, connection `github-mcp-trase`. The Slack
+bot must be a member of the channel.
+
+### Creating `github-mcp-trase`
+
+Kind **MCP**, host `https://api.githubcopilot.com`, credential: a bearer token, a GitHub
+fine-grained token (resource owner TraseSystems, only `trase-os-sdk`, Issues: read-only).
+Publish it, grant it to this agent, and activate policy.
 
 ## Output
 

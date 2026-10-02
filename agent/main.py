@@ -2,6 +2,7 @@
 
 Input (all optional), from Studio or `trase-os-sdk run-workflow --input '{...}'`:
     {"repo": "TraseSystems/trase-os-sdk", "slack_channel": "#ansh-test",
+     "github_connection": "github-mcp-trase",
      "user_message": "anything blocking the next release?"}
 """
 
@@ -18,6 +19,9 @@ log = logging.getLogger(__name__)
 
 DEFAULT_REPO = "TraseSystems/trase-os-sdk"
 DEFAULT_CHANNEL = "#ansh-test"  # the channel the platform's Slack e2e posts to
+# A connection you create (upstream https://api.githubcopilot.com) whose token can read
+# TraseSystems repos. Pass "github-mcp" to use the platform's own GitHub MCP connection.
+DEFAULT_GITHUB_CONNECTION = "github-mcp-trase"
 
 
 def _read_input() -> dict[str, Any]:
@@ -40,6 +44,7 @@ def run() -> dict[str, Any]:
     state = {
         "repo": payload.get("repo") or DEFAULT_REPO,
         "channel": payload.get("slack_channel") or DEFAULT_CHANNEL,
+        "github_connection": payload.get("github_connection") or DEFAULT_GITHUB_CONNECTION,
         "question": (payload.get("user_message") or "").strip(),
     }
     result = asyncio.run(issues_graph.ainvoke(state))

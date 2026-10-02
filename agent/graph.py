@@ -48,6 +48,7 @@ model = ChatOpenAI(
 class State(TypedDict, total=False):
     repo: str  # "owner/name"
     channel: str  # Slack channel, e.g. "#ansh-test"
+    github_connection: str  # connection handle fronting the GitHub MCP server
     question: str
     issues: list[dict[str, Any]]
     mcp_tools: list[str]
@@ -83,14 +84,29 @@ def _issue_rows(raw: Any, repo: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _mcp_url(handle: str) -> str:
+    """Gateway URL of the GitHub MCP server behind connection `handle`.
+
+    `github-mcp` is the platform's own connection, injected as TRASE_GITHUB_MCP_URL. Any other
+    handle is a connection you created with upstream https://api.githubcopilot.com, reached at
+    the gateway under its handle plus the server's /mcp/ path, e.g. a connection whose token
+    can read a repository the platform's token can't.
+    """
+    if handle == "github-mcp" and os.environ.get("TRASE_GITHUB_MCP_URL"):
+        return os.environ["TRASE_GITHUB_MCP_URL"]
+    return f"{os.environ['TRASE_EGRESS_GATEWAY_URL'].rstrip('/')}/{handle}/mcp/"
+
+
 async def fetch_issues(state: State) -> State:
     """Ask the GitHub MCP server for the repo's open issues."""
     owner, name = state["repo"].split("/", 1)
+    handle = state.get("github_connection") or "github-mcp"
+    log.info("using GitHub MCP connection %r", handle)
     client = MultiServerMCPClient(
         {
             "github": {
                 "transport": "streamable_http",
-                "url": os.environ["TRASE_GITHUB_MCP_URL"],
+                "url": _mcp_url(handle),
                 "headers": {"Authorization": f"Bearer {_credential()}"},
             }
         }
