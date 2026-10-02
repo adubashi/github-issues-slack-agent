@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
 import httpx
@@ -49,12 +51,24 @@ class State(TypedDict, total=False):
     repo: str  # "owner/name"
     channel: str  # Slack channel, e.g. "#ansh-test"
     github_connection: str  # connection handle fronting the GitHub MCP server
+    hours: int  # report window: issues opened, updated or closed in the last N hours
+    since: str  # ISO 8601 start of the window
     question: str
     issues: list[dict[str, Any]]
+    counts: dict[str, int]
     mcp_tools: list[str]
     error: str
     summary: str
     slack: dict[str, Any]
+
+
+def _activity(issue: dict[str, Any], since: str) -> str:
+    """What happened to an issue inside the window: new, closed, or updated."""
+    if (issue.get("created_at") or "") >= since:
+        return "new"
+    if str(issue.get("state", "")).lower() == "closed":
+        return "closed"
+    return "updated"
 
 
 def _issue_rows(raw: Any, repo: str) -> list[dict[str, Any]]:
@@ -77,7 +91,9 @@ def _issue_rows(raw: Any, repo: str) -> list[dict[str, Any]]:
                 or f"https://github.com/{repo}/issues/{issue.get('number')}",
                 "author": (issue.get("user") or issue.get("author") or {}).get("login"),
                 "labels": [lb.get("name") if isinstance(lb, dict) else lb for lb in labels],
+                "state": issue.get("state"),
                 "created_at": issue.get("created_at") or issue.get("createdAt"),
+                "updated_at": issue.get("updated_at") or issue.get("updatedAt"),
                 "comments": issue.get("comments"),
             }
         )
@@ -98,8 +114,11 @@ def _mcp_url(handle: str) -> str:
 
 
 async def fetch_issues(state: State) -> State:
-    """Ask the GitHub MCP server for the repo's open issues."""
+    """Ask the GitHub MCP server for issues opened, updated or closed inside the window."""
     owner, name = state["repo"].split("/", 1)
+    since = (datetime.now(UTC) - timedelta(hours=state.get("hours") or 24)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     handle = state.get("github_connection") or "github-mcp"
     log.info("using GitHub MCP connection %r", handle)
     client = MultiServerMCPClient(
@@ -117,8 +136,10 @@ async def fetch_issues(state: State) -> State:
         # GitHub's MCP server hides tools the brokered token can't use.
         return {"mcp_tools": sorted(tools), "error": "the GitHub MCP server offered no list_issues tool"}
     try:
+        # No state filter: open and closed both count as activity. `since` filters on the
+        # issue's last update, so it catches new, updated and just-closed issues.
         raw = await tools["list_issues"].ainvoke(
-            {"owner": owner, "repo": name, "state": "OPEN", "perPage": 20}
+            {"owner": owner, "repo": name, "since": since, "perPage": 100}
         )
     except Exception as exc:  # noqa: BLE001 - reported in the summary, not raised
         log.warning("list_issues on %s failed: %s", state["repo"], exc)
@@ -129,27 +150,50 @@ async def fetch_issues(state: State) -> State:
         # GitHub's MCP server reports failures (e.g. a repo the token can't see) as plain text.
         text = raw if isinstance(raw, str) else json.dumps(raw)
         log.warning("list_issues on %s returned an error: %s", state["repo"], text[:300])
-        return {"mcp_tools": sorted(tools), "error": f"GitHub MCP said: {text[:400]}"}
-    log.info("list_issues returned %d open issue(s) for %s", len(issues), state["repo"])
-    return {"mcp_tools": sorted(tools), "issues": issues}
+        return {"mcp_tools": sorted(tools), "since": since, "error": f"GitHub MCP said: {text[:400]}"}
+    for issue in issues:
+        issue["activity"] = _activity(issue, since)
+    # Newest activity first, new issues ahead of updates.
+    order = {"new": 0, "closed": 1, "updated": 2}
+    issues.sort(key=lambda i: (order[i["activity"]], -(i.get("number") or 0)))
+    counts = {a: sum(i["activity"] == a for i in issues) for a in ("new", "updated", "closed")}
+    log.info("%s since %s: %s", state["repo"], since, counts)
+    return {"mcp_tools": sorted(tools), "since": since, "issues": issues, "counts": counts}
 
 
 SUMMARY_PROMPT = """You write short Slack updates for an engineering team.
 
-Write a Slack message (Slack mrkdwn, under 120 words) about the open GitHub issues in
-{repo}. Start with one line giving the count. Then list each issue as
-"• <url|#number title>" with labels in brackets if any, at most 8 issues. If there is an
-error instead of issues, say plainly that the issues couldn't be fetched and why.
+Write a Slack message in Slack mrkdwn (NOT a code block, no ``` fences), under 150 words,
+about GitHub issue activity in {repo} in the last {hours} hours.
+
+First line, exactly: *{repo} · last {hours}h:* {new} new · {updated} updated · {closed} closed
+Then one line per issue, at most 10, as "• <url|#number title>" followed by the activity
+in italics (_new_, _updated_ or _closed_) and labels in brackets if any. If there are more
+than 10, end with "…and N more". Use the counts above as given; do not recount.
+If there was no activity, say so in one line. If there is an error instead of issues, say
+plainly that the issues couldn't be fetched and why.
 {question}
 Data:
 {data}"""
 
 
+def _strip_fences(text: str) -> str:
+    """Models sometimes wrap Slack text in a ``` block, which Slack shows literally."""
+    return re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text.strip())
+
+
 def summarize(state: State) -> State:
+    counts = state.get("counts") or {"new": 0, "updated": 0, "closed": 0}
     data = {"issues": state.get("issues", []), "error": state.get("error")}
     question = f"The user asked: {state['question']}" if state.get("question") else ""
-    prompt = SUMMARY_PROMPT.format(repo=state["repo"], question=question, data=json.dumps(data))
-    return {"summary": model.invoke(prompt).content}
+    prompt = SUMMARY_PROMPT.format(
+        repo=state["repo"],
+        hours=state.get("hours") or 24,
+        question=question,
+        data=json.dumps(data),
+        **counts,
+    )
+    return {"summary": _strip_fences(model.invoke(prompt).content)}
 
 
 def notify(state: State) -> State:

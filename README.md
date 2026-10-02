@@ -1,6 +1,6 @@
 # github-issues-slack-agent
 
-A Trase OS third-party agent built with LangGraph. It reads a repository's open issues from the
+A Trase OS third-party agent built with LangGraph. It reads the last day of issue activity from the
 **GitHub MCP server**, has the model write a short update, and **posts it to Slack**: a read
 and a governed write in one run.
 
@@ -28,11 +28,11 @@ instead of failing.
 ## Input (all optional)
 
 ```json
-{"repo": "TraseSystems/trase-os-sdk", "slack_channel": "#ansh-test",
- "user_message": "anything blocking the next release?"}
+{"repo": "agentgateway/agentgateway", "slack_channel": "#ansh-test", "hours": 24,
+ "github_connection": "github-mcp-trase", "user_message": "anything security-related?"}
 ```
 
-Defaults: `TraseSystems/trase-os-sdk`, `#ansh-test`, connection `github-mcp-trase`. The Slack
+Defaults: `agentgateway/agentgateway`, `#ansh-test`, connection `github-mcp-trase`, last 24 hours (`"hours"` overrides). The Slack
 bot must be a member of the channel.
 
 ### Creating `github-mcp-trase`

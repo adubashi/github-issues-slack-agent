@@ -2,7 +2,7 @@
 
 Input (all optional), from Studio or `trase-os-sdk run-workflow --input '{...}'`:
     {"repo": "TraseSystems/trase-os-sdk", "slack_channel": "#ansh-test",
-     "github_connection": "github-mcp-trase",
+     "github_connection": "github-mcp-trase", "hours": 24,
      "user_message": "anything blocking the next release?"}
 """
 
@@ -17,7 +17,7 @@ from agent.graph import issues_graph  # noqa: F401
 
 log = logging.getLogger(__name__)
 
-DEFAULT_REPO = "TraseSystems/trase-os-sdk"
+DEFAULT_REPO = "agentgateway/agentgateway"  # public; the engine under the Trase OS gateway
 DEFAULT_CHANNEL = "#ansh-test"  # the channel the platform's Slack e2e posts to
 # A connection you create (upstream https://api.githubcopilot.com) whose token can read
 # TraseSystems repos. Pass "github-mcp" to use the platform's own GitHub MCP connection.
@@ -45,12 +45,14 @@ def run() -> dict[str, Any]:
         "repo": payload.get("repo") or DEFAULT_REPO,
         "channel": payload.get("slack_channel") or DEFAULT_CHANNEL,
         "github_connection": payload.get("github_connection") or DEFAULT_GITHUB_CONNECTION,
+        "hours": int(payload.get("hours") or 24),
         "question": (payload.get("user_message") or "").strip(),
     }
     result = asyncio.run(issues_graph.ainvoke(state))
     return {
         "repo": result["repo"],
-        "open_issues": len(result.get("issues", [])),
+        "since": result.get("since"),
+        "activity": result.get("counts"),
         "error": result.get("error"),
         "slack": result.get("slack"),
         "message": result.get("summary"),
